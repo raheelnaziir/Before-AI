@@ -13,7 +13,7 @@ type Health = 'checking' | 'ok' | 'unreachable'
  */
 export function SystemStatus() {
   const [health, setHealth] = useState<Health>('checking')
-  const [mode, setMode] = useState<string | null>(null)
+  const [provider, setProvider] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -22,7 +22,7 @@ export function SystemStatus() {
       .then((res) => (res.ok ? (res.json() as Promise<HealthResponse>) : null))
       .then((body) => {
         if (!body) throw new Error('bad status')
-        setMode(body.mode)
+        setProvider(body.provider)
         setHealth('ok')
       })
       .catch((error: unknown) => {
@@ -34,7 +34,13 @@ export function SystemStatus() {
   }, [])
 
   const label =
-    health === 'ok' ? (mode ?? 'ok') : health === 'checking' ? '···' : 'offline'
+    health === 'ok'
+      ? provider === 'demo'
+        ? 'demo mode'
+        : 'live'
+      : health === 'checking'
+        ? '···'
+        : 'offline'
 
   return (
     <span className="flex items-center gap-2 font-mono text-[10px] tracking-wider text-ink-faint uppercase">
@@ -42,7 +48,9 @@ export function SystemStatus() {
         aria-hidden
         className={
           health === 'ok'
-            ? 'size-1.5 rounded-full bg-signal-dim'
+            ? provider === 'demo'
+              ? 'size-1.5 rounded-full bg-violet'
+              : 'size-1.5 rounded-full bg-signal'
             : health === 'checking'
               ? 'size-1.5 rounded-full bg-line-strong'
               : 'size-1.5 rounded-full bg-violet'

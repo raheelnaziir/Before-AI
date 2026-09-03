@@ -3,9 +3,7 @@
 import { type KeyboardEvent, useRef } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-
-/** Guard rail, not a hard product limit — prompts this long aren't predictable anyway. */
-export const MAX_PROMPT_LENGTH = 1000
+import { MAX_PROMPT_LENGTH } from '@/lib/round/limits'
 
 interface PromptInputProps {
   value: string
