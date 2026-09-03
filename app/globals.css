@@ -1,0 +1,159 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   Before AI — design tokens
+   Near-black base, one cyan accent, one violet accent. Restraint is the point:
+   the reveal (Day 10) needs headroom, so the resting state stays quiet.
+   --------------------------------------------------------------------------- */
+
+@theme {
+  /* Surfaces — a narrow ladder, not a full grey scale.
+     Each step is just visible against the last. */
+  --color-void: #05060a;
+  --color-base: #08090f;
+  --color-raised: #0c0e16;
+  --color-overlay: #11141e;
+
+  /* Hairlines. Borders carry the structure here, not shadows. */
+  --color-line: #191d29;
+  --color-line-strong: #242938;
+
+  /* Text ladder */
+  --color-ink: #eef1f7;
+  --color-ink-muted: #949cb0;
+  --color-ink-faint: #5c6377;
+
+  /* Accents */
+  --color-signal: #4de2e2;
+  --color-signal-dim: #1f7d7d;
+  --color-violet: #8b7cf6;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, 'SF Mono', monospace;
+
+  --animate-drift: drift 3s ease-in-out infinite;
+  --animate-sweep: sweep 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Vertical bob for the processing orbit dots. */
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+/* Indeterminate bar sweep — honest about being indeterminate.
+   Replaced by a real token count on Day 8. */
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-signal) 45%, transparent);
+  }
+  50% {
+    opacity: 0.65;
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-signal) 0%, transparent);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    background-color: var(--color-void);
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-void);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-signal) 28%, transparent);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-signal);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  textarea {
+    field-sizing: content;
+  }
+}
+
+@layer utilities {
+  /* Ambient wash behind the hero. One gradient, low opacity, no animation —
+     it should register as depth, never as decoration. */
+  .bg-ambient {
+    background-image:
+      radial-gradient(
+        ellipse 80% 50% at 50% -10%,
+        color-mix(in oklab, var(--color-signal) 9%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 60% 45% at 85% 15%,
+        color-mix(in oklab, var(--color-violet) 6%, transparent),
+        transparent 70%
+      );
+  }
+
+  /* 1px top highlight — the cheapest way to make a dark card read as raised. */
+  .edge-light {
+    box-shadow: inset 0 1px 0 0 color-mix(in oklab, white 5%, transparent);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Respect the OS setting. Motion is load-bearing in this product, so the
+   fallback keeps state *legible* rather than removing feedback entirely. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,9 @@
+# Normalize to LF in the repo. Prevents CRLF from a Windows dev machine
+# reaching a Linux build on Vercel.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
