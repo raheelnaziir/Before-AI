@@ -14,7 +14,7 @@ Built for **Commons — "Make Waiting for AI Fun."**
 
 ---
 
-> **Status: pre-implementation.** Architecture and plan are locked; application code is not yet written. This README is a skeleton — sections marked _TODO_ are filled in on Day 15.
+> **Status: core loop complete.** Prompt → contextual challenge → prediction + confidence → Commitment Gate → reveal → AI grading with a verified evidence quote → Brier score → calibration profile and local history. Sections marked _TODO_ are filled in on Day 15.
 
 ## The idea
 

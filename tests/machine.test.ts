@@ -1,25 +1,19 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { ANSWER, CHALLENGE, GRADE } from './fixtures.ts'
 import {
   initialRoundState,
   isAnswerHeld,
   isAwaitingAnswer,
+  isDegraded,
+  isRevealed,
   revealedAnswer,
   roundReducer,
   type RoundState,
 } from '../lib/round/machine.ts'
-import { placeholderChallenge } from '../lib/round/placeholderChallenge.ts'
 import type { RoundAction } from '../lib/round/machine.ts'
-import type { AnswerResult } from '../types/index.ts'
 
 const T0 = 1_000_000
-
-const ANSWER: AnswerResult = {
-  text: 'Use Postgres. Range queries on a timestamp index are its home turf.',
-  model: 'claude-opus-5',
-  outputTokens: 42,
-  latencyMs: 8_400,
-}
 
 /** Fold a list of actions over the reducer. */
 function run(actions: RoundAction[], from: RoundState = initialRoundState): RoundState {
@@ -29,10 +23,15 @@ function run(actions: RoundAction[], from: RoundState = initialRoundState): Roun
 const start: RoundAction = { type: 'START', prompt: 'Postgres or Mongo?', startedAt: T0 }
 const challengeReady: RoundAction = {
   type: 'EVENT',
-  event: { t: 'challenge.ready', challenge: placeholderChallenge() },
+  event: { t: 'challenge.ready', challenge: CHALLENGE },
+}
+const challengeFailed: RoundAction = {
+  type: 'EVENT',
+  event: { t: 'challenge.error', message: 'The model returned an unusable response.' },
 }
 const answerDone: RoundAction = { type: 'EVENT', event: { t: 'answer.done', answer: ANSWER } }
-const lock: RoundAction = { type: 'LOCK', optionId: 'A', at: T0 + 3_000 }
+const lock: RoundAction = { type: 'LOCK', optionId: 'A', confidence: 80, at: T0 + 3_000 }
+const graded: RoundAction = { type: 'GRADED', grade: GRADE }
 
 const delta = (text: string): RoundAction => ({
   type: 'EVENT',
@@ -50,19 +49,26 @@ describe('round machine — lifecycle', () => {
   it('challenge.ready moves processing -> challenge_ready', () => {
     const state = run([start, challengeReady])
     assert.equal(state.status, 'challenge_ready')
-    assert.equal(state.challenge?.isPlaceholder, true)
+    assert.equal(state.challenge?.question, CHALLENGE.question)
   })
 
-  it('round.start adopts the server clock so elapsed matches the stream', () => {
+  it('round.start adopts the server clock and the local intent guess', () => {
     const state = run([
       start,
       {
         type: 'EVENT',
-        event: { t: 'round.start', roundId: 'r1', startedAt: T0 + 25, mode: 'demo' },
+        event: {
+          t: 'round.start',
+          roundId: 'r1',
+          startedAt: T0 + 25,
+          mode: 'demo',
+          intent: 'technical',
+        },
       },
     ])
     assert.equal(state.startedAt, T0 + 25)
     assert.equal(state.mode, 'demo')
+    assert.equal(state.intent, 'technical')
   })
 
   it('RESET clears the hidden buffers', () => {
@@ -70,6 +76,13 @@ describe('round machine — lifecycle', () => {
     assert.equal(state.status, 'idle')
     assert.equal(state.answerBuffer, '')
     assert.equal(state.chars, 0)
+  })
+
+  it('runs the full lifecycle idle -> ... -> completed', () => {
+    const state = run([start, challengeReady, lock, answerDone, graded])
+    assert.equal(state.status, 'completed')
+    assert.equal(state.grade?.verdict, 'hit')
+    assert.equal(state.gradeError, null)
   })
 })
 
@@ -104,7 +117,10 @@ describe('round machine — answer accumulation', () => {
       start,
       challengeReady,
       delta('abc'),
-      { type: 'EVENT', event: { t: 'answer.progress', chars: 900, deltas: 120, elapsedMs: 1_500 } },
+      {
+        type: 'EVENT',
+        event: { t: 'answer.progress', chars: 900, deltas: 120, elapsedMs: 1_500 },
+      },
     ])
     assert.equal(state.chars, 900)
     assert.equal(state.deltas, 120)
@@ -115,6 +131,7 @@ describe('COMMITMENT GATE — the answer stays sealed', () => {
   it('withholds the answer while streaming, prediction unlocked', () => {
     const state = run([start, challengeReady, delta('Use Postgres.')])
     assert.equal(revealedAnswer(state), null)
+    assert.equal(isRevealed(state), false)
   })
 
   it('withholds the answer when it is COMPLETE but no prediction is locked', () => {
@@ -122,7 +139,7 @@ describe('COMMITMENT GATE — the answer stays sealed', () => {
     assert.equal(state.answerComplete, true)
     assert.equal(revealedAnswer(state), null, 'a finished answer must not open the gate')
     assert.equal(isAnswerHeld(state), true)
-    assert.notEqual(state.status, 'completed')
+    assert.equal(isRevealed(state), false)
   })
 
   it('withholds the answer when a prediction is locked but the answer is unfinished', () => {
@@ -130,12 +147,23 @@ describe('COMMITMENT GATE — the answer stays sealed', () => {
     assert.equal(state.status, 'predicted')
     assert.equal(revealedAnswer(state), null, 'locking early must not open the gate')
     assert.equal(isAwaitingAnswer(state), true)
+    assert.equal(isRevealed(state), false)
   })
 
   it('opens only when BOTH conditions hold', () => {
     const state = run([start, challengeReady, answerDone, lock])
-    assert.equal(state.status, 'completed')
+    assert.equal(state.status, 'grading')
     assert.equal(revealedAnswer(state), ANSWER.text)
+    assert.equal(isRevealed(state), true)
+  })
+
+  it('grading cannot happen before the answer is available', () => {
+    // A grade arriving while the answer is still streaming is a stale response
+    // from an abandoned round; it must not complete the round.
+    const state = run([start, challengeReady, lock, graded])
+    assert.equal(state.status, 'predicted')
+    assert.equal(state.grade, null)
+    assert.equal(revealedAnswer(state), null)
   })
 })
 
@@ -147,9 +175,13 @@ describe('COMMITMENT GATE — both race orderings converge', () => {
     assert.equal(revealedAnswer(locked), null)
 
     const settled = roundReducer(locked, answerDone)
-    assert.equal(settled.status, 'completed')
+    assert.equal(settled.status, 'grading')
     assert.equal(revealedAnswer(settled), ANSWER.text)
     assert.equal(settled.prediction?.lockedBeforeAnswer, true, 'the race result must survive')
+
+    const done = roundReducer(settled, graded)
+    assert.equal(done.status, 'completed')
+    assert.equal(done.grade?.score, GRADE.score)
   })
 
   it('ordering B: lock AFTER the answer finishes', () => {
@@ -158,16 +190,20 @@ describe('COMMITMENT GATE — both race orderings converge', () => {
     assert.equal(revealedAnswer(held), null)
 
     const settled = roundReducer(held, lock)
-    assert.equal(settled.status, 'completed')
+    assert.equal(settled.status, 'grading')
     assert.equal(revealedAnswer(settled), ANSWER.text)
     assert.equal(settled.prediction?.lockedBeforeAnswer, false)
+
+    const done = roundReducer(settled, graded)
+    assert.equal(done.status, 'completed')
   })
 
   it('both orderings reach an identical revealed state', () => {
-    const a = run([start, challengeReady, delta('x'), lock, answerDone])
-    const b = run([start, challengeReady, delta('x'), answerDone, lock])
+    const a = run([start, challengeReady, delta('x'), lock, answerDone, graded])
+    const b = run([start, challengeReady, delta('x'), answerDone, lock, graded])
     assert.equal(a.status, b.status)
     assert.equal(revealedAnswer(a), revealedAnswer(b))
+    assert.deepEqual(a.grade, b.grade)
   })
 
   it('records lockedAtMs relative to round start', () => {
@@ -176,7 +212,7 @@ describe('COMMITMENT GATE — both race orderings converge', () => {
   })
 })
 
-describe('round machine — guards', () => {
+describe('round machine — the prediction is immutable', () => {
   it('ignores a lock with no challenge present', () => {
     const state = run([start, lock])
     assert.equal(state.prediction, null)
@@ -185,13 +221,74 @@ describe('round machine — guards', () => {
 
   it('ignores a second lock — the commitment is irreversible', () => {
     const first = run([start, challengeReady, lock])
-    const second = roundReducer(first, { type: 'LOCK', optionId: 'C', at: T0 + 9_000 })
+    const second = roundReducer(first, {
+      type: 'LOCK',
+      optionId: 'C',
+      confidence: 5,
+      at: T0 + 9_000,
+    })
     assert.equal(second.prediction?.optionId, 'A')
+    assert.equal(second.prediction?.confidence, 80)
     assert.equal(second, first, 'a double lock must be a no-op')
+  })
+
+  it('cannot be changed after the answer is revealed', () => {
+    const revealed = run([start, challengeReady, lock, answerDone])
+    const after = roundReducer(revealed, {
+      type: 'LOCK',
+      optionId: 'B',
+      confidence: 100,
+      at: T0 + 12_000,
+    })
+    assert.equal(after.prediction?.optionId, 'A')
+    assert.equal(after, revealed)
   })
 
   it('ignores a lock from the idle state', () => {
     assert.equal(roundReducer(initialRoundState, lock).prediction, null)
+  })
+
+  it('clamps a confidence outside 0..100', () => {
+    const high = run([
+      start,
+      challengeReady,
+      { type: 'LOCK', optionId: 'A', confidence: 140, at: T0 + 1 },
+    ])
+    assert.equal(high.prediction?.confidence, 100)
+
+    const low = run([
+      start,
+      challengeReady,
+      { type: 'LOCK', optionId: 'A', confidence: -20, at: T0 + 1 },
+    ])
+    assert.equal(low.prediction?.confidence, 0)
+  })
+})
+
+describe('round machine — grading failures degrade gracefully', () => {
+  it('GRADE_FAILED completes the round with the answer intact', () => {
+    const state = run([
+      start,
+      challengeReady,
+      lock,
+      answerDone,
+      { type: 'GRADE_FAILED', message: 'The AI judge could not be reached.' },
+    ])
+    assert.equal(state.status, 'completed')
+    assert.equal(state.grade, null)
+    assert.equal(state.gradeError, 'The AI judge could not be reached.')
+    assert.equal(revealedAnswer(state), ANSWER.text, 'the answer survives a grading failure')
+  })
+
+  it('a late grade cannot overwrite a completed round', () => {
+    const failed = run([
+      start,
+      challengeReady,
+      lock,
+      answerDone,
+      { type: 'GRADE_FAILED', message: 'nope' },
+    ])
+    assert.equal(roundReducer(failed, graded), failed)
   })
 })
 
@@ -201,7 +298,10 @@ describe('round machine — failures', () => {
       start,
       challengeReady,
       delta('partial'),
-      { type: 'EVENT', event: { t: 'answer.error', message: 'The AI provider returned an error.' } },
+      {
+        type: 'EVENT',
+        event: { t: 'answer.error', message: 'The AI provider returned an error.' },
+      },
     ])
     assert.equal(state.status, 'error')
     assert.equal(state.error, 'The AI provider returned an error.')
@@ -213,14 +313,7 @@ describe('round machine — failures', () => {
     assert.equal(state.status, 'error')
   })
 
-  it('challenge.error degrades but leaves the answer lane running', () => {
-    const state = run([start, { type: 'EVENT', event: { t: 'challenge.error', message: 'nope' } }, delta('still streaming')])
-    assert.equal(state.status, 'degraded')
-    assert.equal(state.challengeError, 'nope')
-    assert.equal(state.answerBuffer, 'still streaming')
-  })
-
-  it('an error state cannot be settled into completed', () => {
+  it('an error state cannot be settled into grading', () => {
     const state = run([
       start,
       challengeReady,
@@ -242,5 +335,38 @@ describe('round machine — failures', () => {
     assert.equal(state.prediction !== null, true)
     assert.equal(state.answerComplete, true, 'both conditions hold...')
     assert.equal(revealedAnswer(state), null, '...but a failed round still reveals nothing')
+  })
+})
+
+describe('round machine — degraded path', () => {
+  it('challenge.error degrades but leaves the answer lane running', () => {
+    const state = run([start, challengeFailed, delta('still streaming')])
+    assert.equal(state.status, 'degraded')
+    assert.equal(state.challengeError, 'The model returned an unusable response.')
+    assert.equal(state.answerBuffer, 'still streaming')
+    assert.equal(isDegraded(state), true)
+  })
+
+  it('a degraded round still withholds the answer while it is streaming', () => {
+    const state = run([start, challengeFailed, delta('partial')])
+    assert.equal(revealedAnswer(state), null)
+  })
+
+  it('a degraded round reveals on completion — there is no prediction to protect', () => {
+    const state = run([start, challengeFailed, answerDone])
+    assert.equal(state.status, 'completed')
+    assert.equal(revealedAnswer(state), ANSWER.text)
+    // No prediction was possible, so no grading is attempted.
+    assert.equal(state.prediction, null)
+    assert.equal(state.grade, null)
+  })
+
+  it('a late challenge recovers the round rather than staying degraded', () => {
+    const state = run([start, challengeFailed, challengeReady])
+    assert.equal(state.status, 'challenge_ready')
+    assert.equal(state.challengeError, null)
+    assert.equal(isDegraded(state), false)
+    // And the gate is shut again, because there is now something to commit to.
+    assert.equal(revealedAnswer(roundReducer(state, answerDone)), null)
   })
 })

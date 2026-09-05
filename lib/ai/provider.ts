@@ -1,4 +1,4 @@
-import type { ProviderMode } from '@/types'
+import type { Challenge, Grade, OptionId, ProviderMode } from '@/types'
 
 /**
  * One piece of a streaming answer.
@@ -33,6 +33,14 @@ export class RefusalError extends Error {
   }
 }
 
+/** Structured output came back unparseable or schema-invalid. */
+export class StructuredOutputError extends Error {
+  constructor(message = 'The model returned no usable structured output') {
+    super(message)
+    this.name = 'StructuredOutputError'
+  }
+}
+
 /**
  * Assert a usable API key, or fail with an error that carries no key material.
  *
@@ -46,15 +54,39 @@ export function requireApiKey(key: string | undefined): string {
 }
 
 /**
+ * Input to grading.
+ *
+ * `answerText` is present because grading runs *after* the reveal — this is the
+ * one place in the app where a model is allowed to see both the prediction and
+ * the answer. The challenge generator gets a bare prompt and nothing else.
+ */
+export interface GradeInput {
+  challenge: Challenge
+  optionId: OptionId
+  confidence: number
+  answerText: string
+}
+
+/**
  * The AI seam.
  *
- * Thin by design — there are only three things we ask a model to do.
- * `generateChallenge` and `gradePrediction` join this interface with the tasks
- * that implement them; declaring them now as throwing stubs would just be dead
- * code. See ARCHITECTURE.md §5.
+ * Thin by design — there are exactly three things we ask a model to do
+ * (ARCHITECTURE §5). The signatures encode the honesty guarantee:
+ * `generateChallenge` takes a prompt and nothing else, so no implementation of
+ * this interface *can* leak the answer into the challenge.
  */
 export interface AIProvider {
   readonly mode: ProviderMode
+  /**
+   * Generates the challenge from the prompt alone.
+   *
+   * Returns a challenge without `id`/`latencyMs` filled in the way the caller
+   * wants? No — it returns a complete `Challenge`; the adapter stamps `model` and
+   * the measured latency, because only it knows them.
+   */
+  generateChallenge(prompt: string, signal: AbortSignal): Promise<Challenge>
   /** Streams the answer. Must stop promptly when `signal` aborts. */
   streamAnswer(prompt: string, signal: AbortSignal): AsyncIterable<AnswerChunk>
+  /** Grades a locked prediction against the finished answer. */
+  gradePrediction(input: GradeInput, signal: AbortSignal): Promise<Grade>
 }

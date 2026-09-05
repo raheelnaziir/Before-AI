@@ -1,7 +1,9 @@
 'use client'
 
+import { IntentShimmer } from './IntentShimmer'
 import { Card } from '@/components/ui/Card'
 import { cn } from '@/lib/cn'
+import type { Category } from '@/types'
 
 interface MachineWorkingPanelProps {
   /** Real elapsed time since round start, in ms. */
@@ -16,6 +18,10 @@ interface MachineWorkingPanelProps {
   held?: boolean
   /** Running against the demo replay rather than the live API. */
   demo?: boolean
+  /** Local classifier's category. Shown until the challenge arrives. */
+  intent?: Category | null
+  /** Has the challenge landed? Retires the shimmer. */
+  challengeReady?: boolean
 }
 
 function formatElapsed(ms: number): string {
@@ -40,6 +46,8 @@ export function MachineWorkingPanel({
   reasoning = false,
   held = false,
   demo = false,
+  intent = null,
+  challengeReady = false,
 }: MachineWorkingPanelProps) {
   return (
     <Card className="overflow-hidden">
@@ -90,6 +98,13 @@ export function MachineWorkingPanel({
             {status}
           </p>
         </div>
+
+        {/* Retired the moment the real challenge exists — it has done its job. */}
+        {!challengeReady && !held && (
+          <div className="mt-3 pl-[38px]">
+            <IntentShimmer intent={intent} />
+          </div>
+        )}
 
         {/* Indeterminate by design: the total length of an answer is unknowable
             mid-stream, so a percentage bar would be a fiction. */}

@@ -1,4 +1,4 @@
-import type { AnswerResult, Challenge, ProviderMode } from '@/types'
+import type { AnswerResult, Category, Challenge, ProviderMode } from '@/types'
 
 /**
  * The round event log.
@@ -6,12 +6,19 @@ import type { AnswerResult, Challenge, ProviderMode } from '@/types'
  * One ordered stream drives the client state machine (ARCHITECTURE §4). Errors
  * are typed per-lane so a challenge failure can never kill the answer.
  *
- * `answer.thinking` carries the model's own summarized reasoning. It is real,
- * but it is not rendered anywhere in this build — the client uses it only to
- * flip a boolean status. The reasoning ticker is a later task.
+ * `answer.thinking` carries the model's own summarized reasoning. It is real, but
+ * it is not rendered anywhere in this build — the client uses it only to flip a
+ * boolean status. The reasoning ticker is a later task.
  */
 export type RoundEvent =
-  | { t: 'round.start'; roundId: string; startedAt: number; mode: ProviderMode }
+  | {
+      t: 'round.start'
+      roundId: string
+      startedAt: number
+      mode: ProviderMode
+      /** Local classifier's guess, available at t≈0. Superseded by the challenge. */
+      intent: Category
+    }
   | { t: 'challenge.ready'; challenge: Challenge }
   | { t: 'challenge.error'; message: string }
   | { t: 'answer.thinking'; text: string }

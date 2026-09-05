@@ -1,25 +1,35 @@
 'use client'
 
 import { AnimatePresence, motion } from 'framer-motion'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { ChallengeCard } from '@/components/challenge/ChallengeCard'
+import { HistoryDrawer } from '@/components/history/HistoryDrawer'
 import { ExamplePrompts } from '@/components/landing/ExamplePrompts'
 import { Hero } from '@/components/landing/Hero'
 import { HowItWorks } from '@/components/landing/HowItWorks'
 import { PromptInput } from '@/components/landing/PromptInput'
-import { AnswerPanel } from '@/components/reveal/AnswerPanel'
+import { CalibrationPanel } from '@/components/profile/CalibrationPanel'
+import { RevealStage } from '@/components/reveal/RevealStage'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { SystemStatus } from '@/components/ui/SystemStatus'
 import { MachineWorkingPanel } from '@/components/waiting/MachineWorkingPanel'
-import { isAnswerHeld, isAwaitingAnswer } from '@/lib/round/machine'
-import { useRound } from '@/lib/round/useRound'
+import { isAnswerHeld, isAwaitingAnswer, isDegraded, isRevealed } from '@/lib/round/machine'
+import { useRound, type RoundCompleteInput } from '@/lib/round/useRound'
+import { useProfile } from '@/lib/storage/useProfile'
 import { useElapsed } from '@/lib/useElapsed'
+import type { RoundRecord } from '@/types'
 
 const TRANSITION = { duration: 0.32, ease: [0.16, 1, 0.3, 1] } as const
 
 /** Status line for the waiting panel. Describes only what is actually true. */
-function waitingStatus(held: boolean, awaiting: boolean, chars: number): string {
+function waitingStatus(
+  held: boolean,
+  awaiting: boolean,
+  degraded: boolean,
+  chars: number,
+): string {
+  if (degraded) return 'No challenge this round. The answer is still coming.'
   if (held) return 'Answer complete. Waiting on your prediction.'
   if (awaiting) return 'Prediction locked. The AI is still working.'
   if (chars > 0) return 'Answer is forming…'
@@ -28,23 +38,56 @@ function waitingStatus(held: boolean, awaiting: boolean, chars: number): string 
 
 export default function Page() {
   const [prompt, setPrompt] = useState('')
-  const { state, answer, start, lock, reset } = useRound()
+  const { profile, rounds, loading, record, clear } = useProfile()
+
+  /**
+   * Fold a finished round into the profile.
+   *
+   * Skipped when there is no grade — an ungraded round has no verdict, and
+   * recording a placeholder would quietly corrupt the accuracy number that the
+   * whole profile is built on.
+   */
+  const handleComplete = useCallback(
+    ({ state, grade }: RoundCompleteInput) => {
+      if (grade === null || state.challenge === null || state.prediction === null) return
+
+      const label =
+        state.challenge.options.find((o) => o.id === state.prediction?.optionId)?.label ?? ''
+
+      const entry: RoundRecord = {
+        id: state.roundId ?? crypto.randomUUID(),
+        createdAt: state.startedAt ?? Date.now(),
+        prompt: state.prompt,
+        category: state.challenge.category,
+        question: state.challenge.question,
+        optionId: state.prediction.optionId,
+        optionLabel: label,
+        confidence: state.prediction.confidence,
+        verdict: grade.verdict,
+        score: grade.score,
+        correctOptionId: grade.correctOptionId,
+        lockedBeforeAnswer: state.prediction.lockedBeforeAnswer,
+      }
+
+      record(entry)
+    },
+    [record],
+  )
+
+  const { state, answer, start, lock, reset } = useRound({ onComplete: handleComplete })
 
   const elapsed = useElapsed(state.status === 'idle' ? null : state.startedAt)
 
   const held = isAnswerHeld(state)
   const awaiting = isAwaitingAnswer(state)
+  const degraded = isDegraded(state)
   const isIdle = state.status === 'idle'
   const isError = state.status === 'error'
-  const revealed = state.status === 'completed' && answer !== null
+  const revealed = isRevealed(state) && answer !== null
 
   function handleSubmit() {
     if (!prompt.trim()) return
     start(prompt.trim())
-  }
-
-  function handleReset() {
-    reset()
   }
 
   return (
@@ -78,6 +121,11 @@ export default function Page() {
                   <ExamplePrompts onSelect={setPrompt} />
                 </div>
 
+                <div className="mx-auto mt-12 w-full max-w-2xl space-y-4">
+                  <CalibrationPanel profile={profile} loading={loading} />
+                  <HistoryDrawer rounds={rounds} onClear={clear} />
+                </div>
+
                 <HowItWorks />
               </motion.div>
             ) : (
@@ -108,24 +156,28 @@ export default function Page() {
                     </p>
                   </Card>
                 ) : revealed ? (
-                  state.challenge &&
-                  state.prediction && (
-                    <AnswerPanel
+                  <>
+                    <RevealStage
                       text={answer}
                       answer={state.answer}
                       challenge={state.challenge}
                       prediction={state.prediction}
+                      grade={state.grade}
+                      gradeError={state.gradeError}
                     />
-                  )
+                    <CalibrationPanel profile={profile} loading={loading} />
+                  </>
                 ) : (
                   <>
                     <MachineWorkingPanel
                       elapsedMs={elapsed}
-                      status={waitingStatus(held, awaiting, state.chars)}
+                      status={waitingStatus(held, awaiting, degraded, state.chars)}
                       chars={state.chars}
                       reasoning={state.reasoning}
                       held={held}
                       demo={state.mode === 'demo'}
+                      intent={state.intent}
+                      challengeReady={state.challenge !== null}
                     />
 
                     {state.challenge && (
@@ -140,7 +192,7 @@ export default function Page() {
                 )}
 
                 <div className="flex justify-center pt-2">
-                  <Button variant="ghost" onClick={handleReset}>
+                  <Button variant="ghost" onClick={reset}>
                     {revealed || isError ? 'Ask something else' : 'Cancel round'}
                   </Button>
                 </div>

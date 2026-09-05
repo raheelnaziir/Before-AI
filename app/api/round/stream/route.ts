@@ -1,10 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk'
 import type { NextRequest } from 'next/server'
 import { getProvider, resolveMode } from '@/lib/ai'
-import { ConfigurationError, RefusalError } from '@/lib/ai/provider'
+import { safeMessage } from '@/lib/ai/errors'
 import { StreamRequestSchema } from '@/lib/ai/schemas'
+import { classifyPrompt } from '@/lib/intent'
 import { HEARTBEAT, encodeEvent, type RoundEvent } from '@/lib/round/events'
-import { placeholderChallenge } from '@/lib/round/placeholderChallenge'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,34 +11,6 @@ export const dynamic = 'force-dynamic'
 /** Throttle for progress events. Per-token updates would jank the UI. */
 const PROGRESS_INTERVAL_MS = 150
 const HEARTBEAT_INTERVAL_MS = 15_000
-
-/**
- * Map an internal failure to something safe to show a user.
- *
- * Upstream messages are never forwarded — they can carry request details, and a
- * stack trace is never the user's problem. The real error is logged server-side.
- */
-function safeMessage(error: unknown): string {
-  if (error instanceof ConfigurationError) {
-    return 'The AI provider is not configured on this server.'
-  }
-  if (error instanceof RefusalError) {
-    return 'The model declined this prompt. Try rephrasing it.'
-  }
-  if (error instanceof Anthropic.AuthenticationError) {
-    return 'The AI provider rejected this server’s credentials.'
-  }
-  if (error instanceof Anthropic.RateLimitError) {
-    return 'The AI provider is rate limiting us. Give it a moment.'
-  }
-  if (error instanceof Anthropic.APIConnectionError) {
-    return 'Could not reach the AI provider. Check the connection and retry.'
-  }
-  if (error instanceof Anthropic.APIError) {
-    return 'The AI provider returned an error.'
-  }
-  return 'Something went wrong while generating the answer.'
-}
 
 export async function POST(request: NextRequest): Promise<Response> {
   // ── validate ──────────────────────────────────────────────────────────────
@@ -73,7 +44,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // ── stream ────────────────────────────────────────────────────────────────
   const controller = new AbortController()
-  // Client disconnect or navigation tears down the upstream request too, so we
+  // Client disconnect or navigation tears down the upstream requests too, so we
   // never pay for tokens nobody will see.
   request.signal.addEventListener('abort', () => controller.abort(), { once: true })
 
@@ -96,12 +67,40 @@ export async function POST(request: NextRequest): Promise<Response> {
           if (!closed) sink.enqueue(encoder.encode(HEARTBEAT))
         }, HEARTBEAT_INTERVAL_MS)
 
-        send({ t: 'round.start', roundId, startedAt, mode: provider.mode })
+        send({
+          t: 'round.start',
+          roundId,
+          startedAt,
+          mode: provider.mode,
+          // Zero-latency local classification. Gives the UI something true to say
+          // during the ~900ms before the generated challenge exists.
+          intent: classifyPrompt(prompt),
+        })
 
-        // Emitted immediately and without an artificial delay. The real
-        // generator will introduce genuine latency here; faking it now would
-        // break the no-fake-signals rule.
-        send({ t: 'challenge.ready', challenge: placeholderChallenge() })
+        /* ── the fan-out ───────────────────────────────────────────────────────
+           Both calls start now, at t=0, and neither can observe the other. The
+           challenge generator is handed the prompt and nothing else — that is what
+           makes the prediction honest rather than theater (PRODUCT_SPEC §4).
+
+           Started here but awaited below: kicking the challenge off before
+           entering the answer loop is the whole point, and awaiting it first would
+           serialise the two and delay the answer by the challenge's latency. */
+        const challengePromise = provider
+          .generateChallenge(prompt, controller.signal)
+          .then((challenge): RoundEvent => ({ t: 'challenge.ready', challenge }))
+          .catch((error: unknown): RoundEvent | null => {
+            if (controller.signal.aborted) return null
+            console.error('[round/stream] challenge failed:', error)
+            // Degrade, never abort — the answer lane is untouched.
+            return { t: 'challenge.error', message: safeMessage(error) }
+          })
+
+        // Forward the challenge the moment it lands, without blocking the answer.
+        let challengeSent = false
+        const challengeForwarded = challengePromise.then((event) => {
+          challengeSent = true
+          if (event) send(event)
+        })
 
         let chars = 0
         let deltas = 0
@@ -134,6 +133,12 @@ export async function POST(request: NextRequest): Promise<Response> {
               continue
             }
 
+            // The answer beat the challenge. Hold `answer.done` until the
+            // challenge has been sent: the client must have something to commit to
+            // before it learns the answer is ready, or the "answer held" state
+            // arrives with no challenge on screen.
+            if (!challengeSent) await challengeForwarded
+
             send({
               t: 'answer.done',
               answer: {
@@ -151,6 +156,10 @@ export async function POST(request: NextRequest): Promise<Response> {
             send({ t: 'answer.error', message: safeMessage(error) })
           }
         }
+
+        // A fast answer can finish before a slow challenge. Don't close the stream
+        // on an unsettled lane, or the round ends with no challenge at all.
+        await challengeForwarded
 
         send({ t: 'round.end' })
       } catch (error) {

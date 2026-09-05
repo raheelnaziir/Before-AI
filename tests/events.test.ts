@@ -21,7 +21,7 @@ async function collect(chunks: string[]): Promise<RoundEvent[]> {
 }
 
 const SAMPLE: RoundEvent[] = [
-  { t: 'round.start', roundId: 'r1', startedAt: 1_000, mode: 'demo' },
+  { t: 'round.start', roundId: 'r1', startedAt: 1_000, mode: 'demo', intent: 'technical' },
   { t: 'answer.delta', text: 'Use Postgres.' },
   { t: 'answer.progress', chars: 13, deltas: 1, elapsedMs: 240 },
   { t: 'round.end' },

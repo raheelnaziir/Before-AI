@@ -1,15 +1,14 @@
 /**
  * Model IDs, per ARCHITECTURE.md §2.
  *
- * Overridable by env so the answer tier can be swapped without a code change.
- * `challenge` and `grader` are declared now but unused until Task 3/4.
+ * Overridable by env so a tier can be swapped without a code change.
  */
 export const MODELS = {
   /** Main answer. Its longer turn is the runway the waiting experience runs on. */
   answer: process.env.MODEL_ANSWER ?? 'claude-opus-5',
-  /** Challenge generation — latency-critical. Unused until the real generator lands. */
+  /** Challenge generation — latency-critical, so the fast tier. */
   challenge: process.env.MODEL_CHALLENGE ?? 'claude-haiku-4-5',
-  /** Grading — runs under the reveal animation. Unused until grading lands. */
+  /** Grading — runs underneath the reveal animation, so ~600ms is free. */
   grader: process.env.MODEL_GRADER ?? 'claude-haiku-4-5',
 } as const
 
@@ -18,3 +17,10 @@ export const MODELS = {
  * answer while keeping the wait bounded. Streaming is required at this size.
  */
 export const ANSWER_MAX_TOKENS = 64_000
+
+/**
+ * Challenge and grade are both a few hundred tokens of JSON. A tight ceiling is
+ * the cheapest latency win available on the path that has to be fast — and Haiku
+ * 4.5 predates adaptive thinking, so no thinking budget is in play here.
+ */
+export const STRUCTURED_MAX_TOKENS = 1_024
