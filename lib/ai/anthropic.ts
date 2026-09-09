@@ -9,7 +9,7 @@ import {
   StructuredOutputError,
   requireApiKey,
 } from './provider'
-import { ANSWER_MAX_TOKENS, MODELS, STRUCTURED_MAX_TOKENS } from './models'
+import { ANSWER_MAX_TOKENS, API_BASE_URL, MODELS, STRUCTURED_MAX_TOKENS } from './models'
 import { ANSWER_SYSTEM, CHALLENGE_SYSTEM, GRADE_SYSTEM } from './prompts'
 import { GeneratedChallengeSchema, GeneratedGradeSchema } from './schemas'
 import { brierScore } from '@/lib/scoring/brier'
@@ -22,9 +22,17 @@ const OPTION_IDS: OptionId[] = ['A', 'B', 'C', 'D']
  *
  * Server-only. `ANTHROPIC_API_KEY` is read here and never leaves this module —
  * nothing in this file is reachable from a client component.
+ *
+ * The host comes from `API_BASE_URL` rather than the SDK default, because the
+ * key is an AgentRouter key. Passing `baseURL` explicitly is deliberate: the SDK
+ * only consults `ANTHROPIC_BASE_URL` when the option is absent, so `API_BASE_URL`
+ * folds the env override in and stays the single source of truth.
  */
 export function createAnthropicProvider(): AIProvider {
-  const client = new Anthropic({ apiKey: requireApiKey(process.env.ANTHROPIC_API_KEY) })
+  const client = new Anthropic({
+    authToken: requireApiKey(process.env.ANTHROPIC_AUTH_TOKEN),
+    baseURL: API_BASE_URL,
+  })
 
   return {
     mode: 'live',

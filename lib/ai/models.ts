@@ -1,4 +1,23 @@
 /**
+ * Where the Anthropic-compatible API lives.
+ *
+ * Requests are served by AgentRouter, which speaks the Anthropic Messages API,
+ * so the SDK stays as-is and only its host changes. Without this the SDK falls
+ * back to `https://api.anthropic.com`, which rejects an AgentRouter key with a
+ * 401 — that was the authentication failure.
+ *
+ * Must be the bare host: the SDK appends `/v1/messages` itself, so a value
+ * ending in `/v1` would request `/v1/v1/messages`. Trailing slashes are trimmed
+ * because the SDK concatenates this with the path.
+ *
+ * `ANTHROPIC_BASE_URL` is the SDK's own variable name, reused rather than
+ * invented so a native Anthropic key can point back at Anthropic unchanged.
+ */
+export const API_BASE_URL = (
+  process.env.ANTHROPIC_BASE_URL?.trim() || 'https://co.agentrouter.org'
+).replace(/\/+$/, '')
+
+/**
  * Model IDs, per ARCHITECTURE.md §2.
  *
  * Overridable by env so a tier can be swapped without a code change.

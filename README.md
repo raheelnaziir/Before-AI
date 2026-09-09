@@ -62,7 +62,8 @@ npm run dev
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | No | — | Unset ⇒ demo mode |
+| `ANTHROPIC_API_KEY` | No | — | Unset ⇒ demo mode. An AgentRouter key works here |
+| `ANTHROPIC_BASE_URL` | No | `https://co.agentrouter.org` | Anthropic-compatible host. Bare host, no `/v1` |
 | `MODEL_ANSWER` | No | `claude-opus-5` | Main answer |
 | `MODEL_CHALLENGE` | No | `claude-haiku-4-5` | Challenge generation |
 | `MODEL_GRADER` | No | `claude-haiku-4-5` | Grading |
