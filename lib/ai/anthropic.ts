@@ -17,17 +17,6 @@ import type { Challenge, ChallengeOption, Grade, OptionId } from '@/types'
 
 const OPTION_IDS: OptionId[] = ['A', 'B', 'C', 'D']
 
-/**
- * Live provider.
- *
- * Server-only. `ANTHROPIC_API_KEY` is read here and never leaves this module —
- * nothing in this file is reachable from a client component.
- *
- * The host comes from `API_BASE_URL` rather than the SDK default, because the
- * key is an AgentRouter key. Passing `baseURL` explicitly is deliberate: the SDK
- * only consults `ANTHROPIC_BASE_URL` when the option is absent, so `API_BASE_URL`
- * folds the env override in and stays the single source of truth.
- */
 export function createAnthropicProvider(): AIProvider {
   const client = new Anthropic({
     authToken: requireApiKey(process.env.ANTHROPIC_AUTH_TOKEN),
